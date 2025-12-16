@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ArchiaAI
  * Description: Make SEO Rich Blogs using ai! ArchiaStudio.com
- * Version: 1.3
+ * Version: 1.5
  * Author: ArchiaStudio
  * Text Domain: archia-ai-blog
  */
@@ -38,9 +38,19 @@ add_action('admin_init', 'archia_register_options');
 
 function archia_sanitize_options($in) {
     $out = array();
+    $allowed_categories = array(
+    'nature','office','people','technology','minimal','abstract','aerial','blurred','bokeh',
+    'gradient','monochrome','vintage','white','black','blue','red','green','yellow',
+    'cityscape','workspace','food','travel','textures','industry','indoor','outdoor','studio',
+    'finance','medical','season','holiday','event','sport','science','legal','estate',
+    'restaurant','retail','wellness','agriculture','construction','craft','cosmetic',
+    'automotive','gaming','education'
+);
+
+$out['image_category'] = in_array($in['image_category'] ?? '', $allowed_categories)
+    ? $in['image_category']
+    : 'technology';
     $out['openrouter_keys'] = sanitize_textarea_field($in['openrouter_keys'] ?? '');
-    $out['unsplash_key'] = sanitize_text_field($in['unsplash_key'] ?? '');
-    $out['pexels_key'] = sanitize_text_field($in['pexels_key'] ?? '');
     $out['blog_api_key'] = sanitize_text_field($in['blog_api_key'] ?? '');
     $out['company_type'] = sanitize_text_field($in['company_type'] ?? 'web agency');
     $out['company_name'] = sanitize_text_field($in['company_name'] ?? 'ArchiaStudio');
@@ -93,6 +103,31 @@ function archia_load_admin_assets($hook) {
     ?>
     <style>
 /* Define CSS Variables for easy color adjustments */
+
+
+        .healer{
+            --dot-bg: rgb(255, 255, 255);
+            --dot-color: rgba(0, 0, 0, 0.265);
+            --dot-size: 2px;
+            --dot-space: 22px;
+            background:
+                linear-gradient(90deg, var(--dot-bg) calc(var(--dot-space) - var(--dot-size)), transparent 1%) center / var(--dot-space) var(--dot-space),
+                linear-gradient(var(--dot-bg) calc(var(--dot-space) - var(--dot-size)), transparent 1%) center / var(--dot-space) var(--dot-space),
+                var(--dot-color);
+            background-position-y: 0%;
+            animation: shimmer-y 100s infinite linear;
+            /* Added padding for responsiveness */
+            transition: all 0.5s ease-in;
+            border-radius:15px;
+        }
+
+        @keyframes shimmer-y {
+            to {
+                background-position-y: 100%;
+            }
+        }
+
+
 :root {
     --archia-primary-color: #0073aa; /* Standard WordPress Blue */
     --archia-secondary-color: #2c3338;
@@ -378,13 +413,74 @@ p.description strong {
 }
 add_action('admin_enqueue_scripts', 'archia_load_admin_assets');
 
+function archia_get_license_details() {
+    $opts = get_option('archia_options', []);
+    $key  = $opts['blog_api_key'] ?? '';
+
+    if (!$key) return null;
+
+    $cache_key = 'archia_license_details_' . md5($key);
+    $cached = get_transient($cache_key);
+    if ($cached !== false) return $cached;
+
+    $res = wp_remote_get(
+        'https://api.archiastudio.com/api/getdetails/' . rawurlencode($key),
+        ['timeout' => 15]
+    );
+
+    if (is_wp_error($res)) return null;
+
+    $code = wp_remote_retrieve_response_code($res);
+    if ($code < 200 || $code >= 300) return null;
+
+    $json = json_decode(wp_remote_retrieve_body($res), true);
+    if (!is_array($json)) return null;
+
+    // Cache for 6 hours
+    set_transient($cache_key, $json, 6 * HOUR_IN_SECONDS);
+
+    return $json;
+}
+
 function archia_admin_page() {
     if (!current_user_can('manage_options')) return;
     $opts = get_option('archia_options', array());
+    $license = archia_get_license_details();
     ?>
-    <div class="wrap">
+    <div class="wrap healer">
         <img src="https://archiastudio.com/warehouse/data/images/archiaai.png" width="200px">
-        <form method="post" action="options.php">
+        <!-- LICENSE CARD -->
+    <?php if ($license): ?>
+        <div class="archia-license-card" style="
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+    justify-content: left;
+">
+            <img src="<?php echo esc_url($license['image']); ?>" style="width:120px;border-radius: 100%;border: 5px solid #0000001c;" class="archia-license-img">
+            <div>
+                <h3><?php echo esc_html($license['name']); ?></h3>
+                <p>
+                    <strong>Plan:</strong>
+                    <span class="archia-plan archia-plan-<?php echo esc_attr($license['plan']); ?>">
+                        <?php echo esc_html(strtoupper($license['plan'])); ?>
+                    </span>
+                </p>
+                <p><strong>Days Remaining:</strong> <?php echo intval($license['daysRemaining']); ?> days</p>
+                <a href="<?php echo esc_url($license['website']); ?>" target="_blank">Visit Website</a>
+            </div>
+        </div>
+    <?php else: ?>
+        <div class="archia-license-card archia-license-invalid">
+            License not found or invalid.
+        </div>
+    <?php endif; ?>
+        <form method="post" action="options.php" style="
+    padding: 1rem;
+    background: white;
+    border-radius: 15px;
+    margin: 1rem 0px;
+">
             <?php settings_fields(ARCHIA_OPTION_GROUP); ?>
             <?php do_settings_sections(ARCHIA_OPTION_GROUP); ?>
 
@@ -396,15 +492,68 @@ function archia_admin_page() {
                 </tr>
 
                 <tr valign="top">
-                    <th scope="row">Unsplash Access Key</th>
-                    <td><input type="text" name="archia_options[unsplash_key]" value="<?php echo esc_attr($opts['unsplash_key'] ?? ''); ?>" style="width:60%">
-                    <p class="description">Optional — used to get nicer images. If not provided plugin will use source.unsplash.com.</p></td>
-                </tr>
+    <th scope="row">Featured Image Category</th>
+    <td>
+        <select name="archia_options[image_category]">
+            <option value="nature">nature</option>
+            <option value="office">office</option>
+            <option value="people">people</option>
+            <option value="technology">technology</option>
+            <option value="minimal">minimal</option>
+            <option value="abstract">abstract</option>
+            <option value="aerial">aerial</option>
+            <option value="blurred">blurred</option>
+            <option value="bokeh">bokeh</option>
+            <option value="gradient">gradient</option>
+            <option value="monochrome">monochrome</option>
+            <option value="vintage">vintage</option>
+            <option value="white">white</option>
+            <option value="black">black</option>
+            <option value="blue">blue</option>
+            <option value="red">red</option>
+            <option value="green">green</option>
+            <option value="yellow">yellow</option>
+            <option value="cityscape">cityscape</option>
+            <option value="workspace">workspace</option>
+            <option value="food">food</option>
+            <option value="travel">travel</option>
+            <option value="textures">textures</option>
+            <option value="industry">industry</option>
+            <option value="indoor">indoor</option>
+            <option value="outdoor">outdoor</option>
+            <option value="studio">studio</option>
+            <option value="finance">finance</option>
+            <option value="medical">medical</option>
+            <option value="season">season</option>
+            <option value="holiday">holiday</option>
+            <option value="event">event</option>
+            <option value="sport">sport</option>
+            <option value="science">science</option>
+            <option value="legal">legal</option>
+            <option value="estate">estate</option>
+            <option value="restaurant">restaurant</option>
+            <option value="retail">retail</option>
+            <option value="wellness">wellness</option>
+            <option value="agriculture">agriculture</option>
+            <option value="construction">construction</option>
+            <option value="craft">craft</option>
+            <option value="cosmetic">cosmetic</option>
+            <option value="automotive">automotive</option>
+            <option value="gaming">gaming</option>
+            <option value="education">education</option>
+        </select>
 
-                <tr valign="top">
-                    <th scope="row">Pexels API Key</th>
-                    <td><input type="text" name="archia_options[pexels_key]" value="<?php echo esc_attr($opts['pexels_key'] ?? ''); ?>" style="width:60%"></td>
-                </tr>
+        <script>
+            document.querySelector(
+                'select[name="archia_options[image_category]"]'
+            ).value = "<?php echo esc_js($opts['image_category'] ?? 'technology'); ?>";
+        </script>
+
+        <p class="description">
+            Used for featured images via <strong>static.photos</strong> (1200×630).
+        </p>
+    </td>
+</tr>
 
                 <tr valign="top">
                     <th scope="row">License / Blog API Key</th>
@@ -474,7 +623,8 @@ function archia_admin_page() {
         <p>Click to generate a post now (runs same logic as scheduled job). Progress will be shown below.</p>
         <form id="archia-manual-generate-form">
             <?php wp_nonce_field('archia_manual_generate_ajax'); ?>
-            <button type="submit" id="archia-generate-now-btn" class="button button-primary">Generate Now</button>
+            <button type="submit" id="archia-generate-now-btn" class="button button-primary" style="
+    width: 100%;">Generate Now</button>
         </form>
         
         <div class="archia-progress-bar-container">
@@ -663,7 +813,7 @@ function archia_cron_generate_handler() {
             continue;
         }
 
-        $imageUrl = archia_get_random_image($opts['unsplash_key'] ?? '', $opts['pexels_key'] ?? '', $title);
+        $imageUrl = archia_get_static_photo($opts['image_category'] ?? 'technology');
 
         $post_id = archia_create_post_from_generated($title, $contentHtml, $keywords, $imageUrl, $opts);
 
@@ -727,7 +877,7 @@ function archia_rest_generate($request) {
     $contentHtml = archia_generate_content_html($title, $idea);
     if (!$contentHtml) return new WP_Error('llm_failed','LLM generation failed', array('status'=>502));
 
-    $imageUrl = archia_get_random_image($opts['unsplash_key'] ?? '', $opts['pexels_key'] ?? '', $title);
+    $imageUrl = archia_get_static_photo($opts['image_category'] ?? 'technology');
 
 
     $post_id = archia_create_post_from_generated($title, $contentHtml, $keywords, $imageUrl, $opts);
@@ -864,52 +1014,81 @@ function archia_generate_content_html($title, $idea) {
 
 // ========================================================
 // ===============   IMAGE HELPERS  ========================
+function archia_get_static_photo($category) {
+    $category = sanitize_text_field($category ?: 'technology');
+    return "https://static.photos/{$category}/1200x630?seed=" . uniqid('', true);
+}
 
-function archia_get_random_image($unsplashKey, $pexelsKey, $q) {
-    // 50% pexels if available
-    if (!empty($pexelsKey) && (mt_rand(0,1) === 0)) {
-        $pex = archia_get_pexels_image($pexelsKey, $q);
-        if ($pex) return $pex;
+
+function archia_download_and_attach_image($image_url, $post_id, $title = '') {
+
+    if (empty($image_url) || empty($post_id)) return false;
+
+    require_once ABSPATH . 'wp-admin/includes/file.php';
+    require_once ABSPATH . 'wp-admin/includes/media.php';
+    require_once ABSPATH . 'wp-admin/includes/image.php';
+
+    $attempts = 3;
+
+    while ($attempts--) {
+
+        // Force headers (important for CDN)
+        $tmp = download_url($image_url, 30, [
+            'headers' => [
+                'User-Agent' => 'Mozilla/5.0 (WordPress; ArchiaAI)',
+                'Accept'     => 'image/*'
+            ]
+        ]);
+
+        if (is_wp_error($tmp)) {
+            error_log('[ArchiaAI] Download failed: ' . $tmp->get_error_message());
+            continue;
+        }
+
+        // Validate file size (min 5KB)
+        if (filesize($tmp) < 5120) {
+            @unlink($tmp);
+            error_log('[ArchiaAI] Image too small, retrying');
+            continue;
+        }
+
+        // Validate mime type
+        $mime = mime_content_type($tmp);
+        if (!str_starts_with($mime, 'image/')) {
+            @unlink($tmp);
+            error_log('[ArchiaAI] Invalid mime: ' . $mime);
+            continue;
+        }
+
+        // Build safe filename
+        $filename = sanitize_file_name(
+            'archia-' . substr(md5($image_url . microtime()), 0, 12) . '.jpg'
+        );
+
+        $file_array = [
+            'name'     => $filename,
+            'tmp_name' => $tmp
+        ];
+
+        $attachment_id = media_handle_sideload($file_array, $post_id, $title);
+
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            error_log('[ArchiaAI] media_handle_sideload failed');
+            continue;
+        }
+
+        set_post_thumbnail($post_id, $attachment_id);
+        return $attachment_id;
     }
-    return archia_get_unsplash_image($unsplashKey, $q);
+
+    error_log('[ArchiaAI] Image download failed after retries');
+    return false;
 }
 
-function archia_get_pexels_image($apiKey, $q) {
-    $url = 'https://api.pexels.com/v1/search?query='.rawurlencode($q).'&per_page=1';
-    $res = wp_remote_get($url, array('headers' => array('Authorization' => $apiKey), 'timeout'=>15));
-    if (is_wp_error($res)) return null;
-    $code = wp_remote_retrieve_response_code($res);
-    if ($code < 200 || $code >= 300) return null;
-    $json = json_decode(wp_remote_retrieve_body($res), true);
-    return $json['photos'][0]['src']['large'] ?? null;
-}
 
-function archia_get_unsplash_image($accessKey, $q) {
-    if (!empty($accessKey)) {
-        $endpoint = 'https://api.unsplash.com/photos/random?query='.rawurlencode($q).'&orientation=landscape&client_id='.$accessKey;
-        $res = wp_remote_get($endpoint, array('timeout'=>30));
-        if (is_wp_error($res)) return archia_fallback_image();
-        $code = wp_remote_retrieve_response_code($res);
-        if ($code < 200 || $code >= 300) return archia_fallback_image();
-        $json = json_decode(wp_remote_retrieve_body($res), true);
-        return $json['urls']['regular'] ?? archia_fallback_image();
-    } else {
-        // use source.unsplash.com as fallback
-        return 'https://source.unsplash.com/1200x600/?'.rawurlencode($q);
-    }
-}
 
-function archia_fallback_image() {
 
-    $fallbacks = array(
-        'https://i.pinimg.com/1200x/4e/ba/3a/4eba3a4cb7b18d54f4b40d2e95ce5071.jpg',
-        'https://i.pinimg.com/1200x/0d/03/30/0d03300b8171108642973cfd1d2583bb.jpg',
-        'https://i.pinimg.com/1200x/71/77/98/7177985535ec83dc423241345facaaee.jpg',
-        'https://i.pinimg.com/1200x/37/15/7b/37157bf6ee85f978ecd89ca11f0c3268.jpg'
-    );
-
-    return $fallbacks[array_rand($fallbacks)];
-}
 
 
 // ---------- Create WP Post & attach featured image ----------
@@ -935,7 +1114,7 @@ function archia_create_post_from_generated($title, $contentHtml, $keywords, $ima
         require_once(ABSPATH . 'wp-admin/includes/image.php');
 
         // Use media_sideload_image to create attachment
-        $tmp = media_sideload_image($imageUrl, $post_id, $title, 'id');
+        $tmp = archia_download_and_attach_image($imageUrl, $post_id, $title);
         if (!is_wp_error($tmp) && intval($tmp) > 0) {
             set_post_thumbnail($post_id, intval($tmp));
         }
@@ -943,6 +1122,9 @@ function archia_create_post_from_generated($title, $contentHtml, $keywords, $ima
 
     return $post_id;
 }
+
+
+
 
 // ---------- License verification ----------
 function archia_verify_license($key) {
